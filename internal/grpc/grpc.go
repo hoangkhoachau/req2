@@ -3,7 +3,6 @@ package grpcclient
 import (
 	"context"
 	"crypto/tls"
-	"errors"
 
 	"github.com/samber/lo"
 	"google.golang.org/grpc"
@@ -35,10 +34,6 @@ func (c *GrpcClient) SendRequest(ctx context.Context, reqStr string, method prot
 	req := dynamicpb.NewMessage(method.Input())
 	if err := protojson.Unmarshal([]byte(reqStr), req); err != nil {
 		return nil, err
-	}
-
-	if c.conn == nil {
-		return nil, errors.New("gRPC connection is not established")
 	}
 
 	rsp := dynamicpb.NewMessage(method.Output())

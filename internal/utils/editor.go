@@ -1,11 +1,11 @@
-package cache
+package utils
 
 import (
 	"os"
 	"os/exec"
 )
 
-func Edit(val string) string {
+func Edit(val string) (string, error) {
 	editor := os.Getenv("EDITOR")
 	if editor == "" {
 		editor = "vi"
@@ -13,13 +13,14 @@ func Edit(val string) string {
 
 	tempFile, err := os.CreateTemp("", "req2-edit-*.txt")
 	if err != nil {
-		panic(err)
+		return val, err
 	}
 	defer os.Remove(tempFile.Name())
+	defer tempFile.Close()
 
 	_, err = tempFile.WriteString(val)
 	if err != nil {
-		panic(err)
+		return val, err
 	}
 
 	cmd := exec.Command(editor, tempFile.Name())
@@ -28,13 +29,13 @@ func Edit(val string) string {
 	cmd.Stderr = os.Stderr
 	err = cmd.Run()
 	if err != nil {
-		panic(err)
+		return val, err
 	}
 	editedContent, err := os.ReadFile(tempFile.Name())
 	if err != nil {
-		panic(err)
+		return val, err
 	}
 	val = string(editedContent)
 
-	return val
+	return val, nil
 }

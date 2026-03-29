@@ -6,56 +6,54 @@ import (
 	"os"
 	"path/filepath"
 
+	"slices"
+
 	"github.com/bufbuild/protocompile"
 	"github.com/bufbuild/protocompile/linker"
 	"github.com/samber/lo"
 	"google.golang.org/protobuf/reflect/protoreflect"
+	"google.golang.org/protobuf/types/dynamicpb"
 )
 
-func Compile(ctx context.Context, path string) ([]protoreflect.FileDescriptor, error) {
-	fds := make([]protoreflect.FileDescriptor, 0)
-
+func Compile(ctx context.Context, path string, importPaths []string) ([]protoreflect.FileDescriptor, error) {
 	stat, err := os.Stat(path)
 	if err != nil {
 		return nil, err
 	}
 
+	c := protocompile.Compiler{
+		Resolver: protocompile.WithStandardImports(&protocompile.SourceResolver{
+			ImportPaths: importPaths,
+		}),
+		MaxParallelism: 0,
+		SourceInfoMode: protocompile.SourceInfoExtraComments,
+	}
+
+	var names []string
 	if stat.IsDir() {
-		subFiles, err := os.ReadDir(path)
+		entries, err := os.ReadDir(path)
 		if err != nil {
 			return nil, err
 		}
-		for _, subFile := range subFiles {
-			if subFile.IsDir() || filepath.Ext(subFile.Name()) != ".proto" {
-				continue
+		for _, entry := range entries {
+			if !entry.IsDir() && filepath.Ext(entry.Name()) == ".proto" {
+				names = append(names, entry.Name())
 			}
-			subFds, err := Compile(ctx, path+"/"+subFile.Name())
-			if err != nil {
-				return nil, err
-			}
-			fds = append(fds, subFds...)
 		}
 	} else {
 		if filepath.Ext(path) != ".proto" {
 			return nil, fmt.Errorf("invalid proto file: %s", path)
 		}
-		compiler := protocompile.Compiler{
-			Resolver: protocompile.WithStandardImports(&protocompile.SourceResolver{
-				ImportPaths: []string{filepath.Dir(path)},
-			}),
-			MaxParallelism: 0,
-			SourceInfoMode: protocompile.SourceInfoExtraComments,
-		}
-		res, err := compiler.Compile(ctx, filepath.Base(path))
-		if err != nil {
-			return nil, err
-		}
-		fds = append(fds, lo.Map(res, func(fd linker.File, _ int) protoreflect.FileDescriptor {
-			return fd
-		})...)
+		names = []string{filepath.Base(path)}
 	}
 
-	return fds, err
+	res, err := c.Compile(ctx, names...)
+	if err != nil {
+		return nil, err
+	}
+	return lo.Map(res, func(fd linker.File, _ int) protoreflect.FileDescriptor {
+		return fd
+	}), nil
 }
 
 func ListServices(fds []protoreflect.FileDescriptor) []protoreflect.ServiceDescriptor {
@@ -66,6 +64,25 @@ func ListServices(fds []protoreflect.FileDescriptor) []protoreflect.ServiceDescr
 		}
 	}
 	return services
+}
+
+func NewMessage(desc protoreflect.MessageDescriptor) *dynamicpb.Message {
+	var fill func(protoreflect.MessageDescriptor, []protoreflect.FullName) *dynamicpb.Message
+	fill = func(desc protoreflect.MessageDescriptor, path []protoreflect.FullName) *dynamicpb.Message {
+		msg := dynamicpb.NewMessage(desc)
+		for i := 0; i < desc.Fields().Len(); i++ {
+			f := desc.Fields().Get(i)
+			if f.Kind() != protoreflect.MessageKind || f.IsList() || f.IsMap() {
+				continue
+			}
+			nested := f.Message()
+			if !slices.Contains(path, nested.FullName()) {
+				msg.Set(f, protoreflect.ValueOfMessage(fill(nested, append(path, desc.FullName()))))
+			}
+		}
+		return msg
+	}
+	return fill(desc, nil)
 }
 
 func ListMethods(fds []protoreflect.ServiceDescriptor) []protoreflect.MethodDescriptor {
