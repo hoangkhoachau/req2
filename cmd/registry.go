@@ -4,7 +4,7 @@ import (
 	"context"
 	"os"
 	"path/filepath"
-	compiler "req2/internal/proto"
+	compiler "github.com/hoangkhoachau/req2/internal/proto"
 	"strings"
 	"sync"
 

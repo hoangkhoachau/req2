@@ -2,7 +2,7 @@ package cmd
 
 import (
 	"fmt"
-	compiler "req2/internal/proto"
+	compiler "github.com/hoangkhoachau/req2/internal/proto"
 
 	"github.com/spf13/cobra"
 	"google.golang.org/protobuf/reflect/protoreflect"

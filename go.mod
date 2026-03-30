@@ -1,4 +1,4 @@
-module req2
+module github.com/hoangkhoachau/req2
 
 go 1.26.1
 

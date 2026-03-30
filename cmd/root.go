@@ -22,9 +22,9 @@ import (
 	"google.golang.org/protobuf/encoding/protojson"
 	"google.golang.org/protobuf/types/dynamicpb"
 
-	"req2/internal/cache"
-	compiler "req2/internal/proto"
-	"req2/internal/utils"
+	"github.com/hoangkhoachau/req2/internal/cache"
+	compiler "github.com/hoangkhoachau/req2/internal/proto"
+	"github.com/hoangkhoachau/req2/internal/utils"
 )
 
 func fatal(err error) {

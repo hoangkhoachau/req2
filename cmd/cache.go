@@ -1,7 +1,7 @@
 package cmd
 
 import (
-	"req2/internal/cache"
+	"github.com/hoangkhoachau/req2/internal/cache"
 
 	"github.com/spf13/cobra"
 )
