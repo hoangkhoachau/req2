@@ -7,6 +7,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"io"
 	"os"
 	"os/signal"
 	"path/filepath"
@@ -16,51 +17,81 @@ import (
 	"req2/internal/utils"
 	"strings"
 
-	"github.com/samber/lo"
 	"github.com/spf13/cobra"
 	"github.com/spf13/viper"
+	"google.golang.org/grpc/metadata"
 	"google.golang.org/protobuf/encoding/protojson"
 	"google.golang.org/protobuf/reflect/protoreflect"
 )
 
 var cfgFile string
-var methods []protoreflect.MethodDescriptor
+var methods map[string]protoreflect.MethodDescriptor
+var messages map[string]protoreflect.MessageDescriptor
+
+var jsonMarshal = protojson.MarshalOptions{
+	Multiline:       true,
+	Indent:          "  ",
+	EmitUnpopulated: true,
+}
 
 func methodFullName(m protoreflect.MethodDescriptor) string {
 	return string(m.Parent().Name()) + "/" + string(m.Name())
 }
 
+func resolveMethod(cmd *cobra.Command, name string) protoreflect.MethodDescriptor {
+	populateMethods(cmd)
+	method, found := methods[name]
+	if !found {
+		fmt.Fprintln(os.Stderr, "Method not found:", name)
+		os.Exit(1)
+	}
+	return method
+}
+
+func completionCandidates(cmd *cobra.Command, toComplete string) []string {
+	populateMethods(cmd)
+	var names []string
+	for name, m := range methods {
+		if strings.HasPrefix(name, toComplete) {
+			desc := string(m.Input().Name()) + " → " + string(m.Output().Name())
+			names = append(names, name+"\t"+desc)
+		}
+	}
+	return names
+}
+
+func messageCompletionCandidates(cmd *cobra.Command, toComplete string) []string {
+	populateMethods(cmd)
+	var names []string
+	for name := range messages {
+		if strings.HasPrefix(name, toComplete) {
+			names = append(names, name)
+		}
+	}
+	return names
+}
+
 // rootCmd represents the base command when called without any subcommands
 var rootCmd = &cobra.Command{
-	Use:   "req2",
-	Short: "A brief description of your application",
-	Long: `A longer description that spans multiple lines and likely contains
-examples and usage of using your application. For example:
+	Use:   "req2 <Service/Method>",
+	Short: "A simple gRPC testing tool",
+	Long: `req2 is a simple CLI tool for testing gRPC endpoints.
 
-Cobra is a CLI library for Go that empowers applications.
-This application is a tool to generate the needed files
-to quickly create a Cobra application.`,
+It compiles .proto files, generates a JSON request template for the selected
+method, opens it in $EDITOR, sends the request, and caches the input for reuse.
+
+Example:
+  req2 -a localhost:50051 -p ./api.proto Greeter/SayHello`,
 	ValidArgsFunction: func(cmd *cobra.Command, args []string, toComplete string) ([]string, cobra.ShellCompDirective) {
 		if len(args) > 0 {
 			return nil, cobra.ShellCompDirectiveNoFileComp
 		}
-		populateMethods(cmd)
-		methodNames := lo.FilterMap(methods, func(method protoreflect.MethodDescriptor, _ int) (string, bool) {
-			fullName := methodFullName(method)
-			return fullName, method.Name().IsValid() && strings.HasPrefix(fullName, toComplete)
-		})
-		return methodNames, cobra.ShellCompDirectiveNoFileComp
+		return completionCandidates(cmd, toComplete), cobra.ShellCompDirectiveNoFileComp
 	},
 	Args: cobra.ExactArgs(1),
 	Run: func(cmd *cobra.Command, args []string) {
-		populateMethods(cmd)
-		method, found := lo.Find(methods, func(method protoreflect.MethodDescriptor) bool {
-			return methodFullName(method) == args[0]
-		})
-		if !found {
-			fmt.Fprintln(os.Stderr, "Method not found:", args[0])
-			os.Exit(1)
-		}
+		method := resolveMethod(cmd, args[0])
+
 		address := viper.GetString("address")
 		insecure := viper.GetBool("insecure")
 
@@ -71,11 +102,7 @@ to quickly create a Cobra application.`,
 		}
 		defer client.Close()
 
-		inputStr, err := protojson.MarshalOptions{
-			Multiline:       true,
-			Indent:          "  ",
-			EmitUnpopulated: true,
-		}.Marshal(compiler.NewMessage(method.Input()))
+		inputStr, err := jsonMarshal.Marshal(compiler.NewMessage(method.Input()))
 		if err != nil {
 			fmt.Fprintln(os.Stderr, "Error:", err)
 			os.Exit(1)
@@ -87,7 +114,21 @@ to quickly create a Cobra application.`,
 			input = cachedInput
 		}
 
-		if repeat, _ := cmd.Flags().GetBool("repeat"); !repeat {
+		repeat, _ := cmd.Flags().GetBool("repeat")
+		fromStdin := false
+		if stdinStat, err := os.Stdin.Stat(); err == nil {
+			fromStdin = stdinStat.Mode()&os.ModeCharDevice == 0
+		}
+
+		switch {
+		case fromStdin:
+			stdinBytes, err := io.ReadAll(os.Stdin)
+			if err != nil {
+				fmt.Fprintln(os.Stderr, "Error:", err)
+				os.Exit(1)
+			}
+			input = string(stdinBytes)
+		case !repeat:
 			input, err = utils.Edit(input)
 			if err != nil {
 				fmt.Fprintln(os.Stderr, "Error:", err)
@@ -95,17 +136,33 @@ to quickly create a Cobra application.`,
 			}
 		}
 
-		resp, err := client.SendRequest(cmd.Context(), input, method)
+		reqCtx := cmd.Context()
+		if timeout := viper.GetDuration("timeout"); timeout > 0 {
+			var cancel context.CancelFunc
+			reqCtx, cancel = context.WithTimeout(reqCtx, timeout)
+			defer cancel()
+		}
+
+		if headers, _ := cmd.Flags().GetStringArray("header"); len(headers) > 0 {
+			md := metadata.New(nil)
+			for _, h := range headers {
+				key, value, ok := strings.Cut(h, ":")
+				if !ok {
+					fmt.Fprintln(os.Stderr, "Invalid header (expected key:value):", h)
+					os.Exit(1)
+				}
+				md.Append(strings.TrimSpace(key), strings.TrimSpace(value))
+			}
+			reqCtx = metadata.NewOutgoingContext(reqCtx, md)
+		}
+
+		resp, err := client.SendRequest(reqCtx, input, method)
 		if err != nil {
 			fmt.Fprintln(os.Stderr, "Error:", err)
 			os.Exit(1)
 		}
 
-		outputStr, err := protojson.MarshalOptions{
-			Multiline:       true,
-			Indent:          "  ",
-			EmitUnpopulated: true,
-		}.Marshal(resp)
+		outputStr, err := jsonMarshal.Marshal(resp)
 		if err != nil {
 			fmt.Fprintln(os.Stderr, "Error:", err)
 			os.Exit(1)
@@ -145,9 +202,12 @@ func init() {
 	rootCmd.Flags().StringP("address", "a", "", "gRPC server address")
 	rootCmd.Flags().BoolP("insecure", "i", false, "use insecure connection")
 	rootCmd.Flags().BoolP("repeat", "r", false, "repeat request without editor input")
+	rootCmd.Flags().DurationP("timeout", "t", 0, "request timeout (e.g. 30s, 1m); 0 means no timeout")
+	rootCmd.Flags().StringArrayP("header", "H", nil, "gRPC metadata header (key:value), repeatable")
 
 	viper.BindPFlag("address", rootCmd.Flags().Lookup("address"))
 	viper.BindPFlag("insecure", rootCmd.Flags().Lookup("insecure"))
+	viper.BindPFlag("timeout", rootCmd.Flags().Lookup("timeout"))
 }
 
 // initConfig reads in config file and ENV variables if set.
@@ -176,7 +236,7 @@ func initConfig() {
 				fmt.Fprintln(os.Stderr, "Error creating config dir:", mkErr)
 				return
 			}
-			defaultConfig := "address: \"\"\ninsecure: false\n"
+			defaultConfig := "address: \"\"\ninsecure: false\ntimeout: 30s\n"
 			if writeErr := os.WriteFile(configPath, []byte(defaultConfig), 0644); writeErr != nil {
 				fmt.Fprintln(os.Stderr, "Error creating config file:", writeErr)
 				return
@@ -190,9 +250,11 @@ func initConfig() {
 }
 
 func populateMethods(cmd *cobra.Command) {
-	if len(methods) != 0 {
+	if methods != nil {
 		return
 	}
+	methods = make(map[string]protoreflect.MethodDescriptor)
+	messages = make(map[string]protoreflect.MessageDescriptor)
 	protos, _ := cmd.PersistentFlags().GetStringSlice("proto")
 
 	importPaths := make([]string, 0, len(protos))
@@ -226,7 +288,10 @@ func populateMethods(cmd *cobra.Command) {
 			os.Exit(1)
 		}
 
-		services := compiler.ListServices(res)
-		methods = append(methods, compiler.ListMethods(services)...)
+		for _, m := range compiler.ListMethods(compiler.ListServices(res)) {
+			methods[methodFullName(m)] = m
+			messages[string(m.Input().Name())] = m.Input()
+			messages[string(m.Output().Name())] = m.Output()
+		}
 	}
 }

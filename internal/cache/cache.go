@@ -41,7 +41,7 @@ func StoreCache(templateStr, response string) error {
 	if err := os.MkdirAll(cacheDir, 0700); err != nil {
 		return err
 	}
-	return os.WriteFile(cachePath, []byte(response), 0644)
+	return os.WriteFile(cachePath, []byte(response), 0600)
 }
 
 func ClearCache() error {
