@@ -2,6 +2,7 @@ package cmd
 
 import (
 	"context"
+	"fmt"
 	"os"
 	"path/filepath"
 	compiler "github.com/hoangkhoachau/req2/internal/proto"
@@ -19,6 +20,7 @@ type registry struct {
 
 var (
 	reg     *registry
+	regErr  error
 	regOnce sync.Once
 )
 
@@ -36,15 +38,11 @@ func rpcPath(m protoreflect.MethodDescriptor) string {
 	return "/" + string(m.Parent().FullName()) + "/" + string(m.Name())
 }
 
-func loadRegistry(ctx context.Context, protoPaths []string) *registry {
+func loadRegistry(ctx context.Context, protoPaths []string) (*registry, error) {
 	regOnce.Do(func() {
-		var err error
-		reg, err = buildRegistry(ctx, protoPaths)
-		if err != nil {
-			fatal(err)
-		}
+		reg, regErr = buildRegistry(ctx, protoPaths)
 	})
-	return reg
+	return reg, regErr
 }
 
 func buildRegistry(ctx context.Context, protoPaths []string) (*registry, error) {
@@ -87,14 +85,23 @@ func buildRegistry(ctx context.Context, protoPaths []string) (*registry, error) 
 	return r, nil
 }
 
-func resolveMethod(ctx context.Context, protoPaths []string, name string) (protoreflect.MethodDescriptor, bool) {
-	r := loadRegistry(ctx, protoPaths)
+func resolveMethod(ctx context.Context, protoPaths []string, name string) (protoreflect.MethodDescriptor, error) {
+	r, err := loadRegistry(ctx, protoPaths)
+	if err != nil {
+		return nil, err
+	}
 	method, found := r.methods[name]
-	return method, found
+	if !found {
+		return nil, fmt.Errorf("method not found: %s", name)
+	}
+	return method, nil
 }
 
 func completionCandidates(ctx context.Context, protoPaths []string, toComplete string) []string {
-	r := loadRegistry(ctx, protoPaths)
+	r, err := loadRegistry(ctx, protoPaths)
+	if err != nil {
+		return nil
+	}
 	var names []string
 	for name, m := range r.methods {
 		if strings.HasPrefix(name, toComplete) {
@@ -106,7 +113,10 @@ func completionCandidates(ctx context.Context, protoPaths []string, toComplete s
 }
 
 func messageCompletionCandidates(ctx context.Context, protoPaths []string, toComplete string) []string {
-	r := loadRegistry(ctx, protoPaths)
+	r, err := loadRegistry(ctx, protoPaths)
+	if err != nil {
+		return nil
+	}
 	var names []string
 	for name := range r.messages {
 		if strings.HasPrefix(name, toComplete) {

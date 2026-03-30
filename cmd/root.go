@@ -27,11 +27,6 @@ import (
 	"github.com/hoangkhoachau/req2/internal/utils"
 )
 
-func fatal(err error) {
-	fmt.Fprintln(os.Stderr, "Error:", err)
-	os.Exit(1)
-}
-
 var cfgFile string
 
 // rootCmd represents the base command when called without any subcommands
@@ -53,11 +48,11 @@ Example:
 		return completionCandidates(cmd.Context(), protos, toComplete), cobra.ShellCompDirectiveNoFileComp
 	},
 	Args: cobra.ExactArgs(1),
-	Run: func(cmd *cobra.Command, args []string) {
+	RunE: func(cmd *cobra.Command, args []string) error {
 		protos, _ := cmd.PersistentFlags().GetStringSlice("proto")
-		method, ok := resolveMethod(cmd.Context(), protos, args[0])
-		if !ok {
-			fatal(fmt.Errorf("method not found: %s", args[0]))
+		method, err := resolveMethod(cmd.Context(), protos, args[0])
+		if err != nil {
+			return err
 		}
 
 		address := viper.GetString("address")
@@ -69,13 +64,13 @@ Example:
 		}
 		conn, err := grpc.NewClient(address, grpc.WithTransportCredentials(creds))
 		if err != nil {
-			fatal(err)
+			return err
 		}
 		defer conn.Close()
 
 		inputStr, err := jsonMarshal.Marshal(compiler.NewMessage(method.Input()))
 		if err != nil {
-			fatal(err)
+			return err
 		}
 
 		defaultInput := string(inputStr)
@@ -99,13 +94,13 @@ Example:
 		case fromStdin:
 			stdinBytes, err := io.ReadAll(os.Stdin)
 			if err != nil {
-				fatal(err)
+				return err
 			}
 			input = string(stdinBytes)
 		case !repeat:
 			input, err = utils.Edit(input)
 			if err != nil {
-				fatal(err)
+				return err
 			}
 		}
 
@@ -121,7 +116,7 @@ Example:
 			for _, h := range headers {
 				key, value, ok := strings.Cut(h, ":")
 				if !ok {
-					fatal(fmt.Errorf("invalid header (expected key:value): %s", h))
+					return fmt.Errorf("invalid header (expected key:value): %s", h)
 				}
 				md.Append(strings.TrimSpace(key), strings.TrimSpace(value))
 			}
@@ -130,16 +125,16 @@ Example:
 
 		req := dynamicpb.NewMessage(method.Input())
 		if err := protojson.Unmarshal([]byte(input), req); err != nil {
-			fatal(err)
+			return err
 		}
 		rsp := dynamicpb.NewMessage(method.Output())
 		if err := conn.Invoke(reqCtx, rpcPath(method), req, rsp); err != nil {
-			fatal(err)
+			return err
 		}
 
 		outputStr, err := jsonMarshal.Marshal(rsp)
 		if err != nil {
-			fatal(err)
+			return err
 		}
 
 		fmt.Println(string(outputStr))
@@ -147,7 +142,9 @@ Example:
 		if err = cache.StoreCache(defaultInput, input); err != nil {
 			fmt.Fprintln(os.Stderr, "Warning: failed to cache input:", err)
 		}
+		return nil
 	},
+	SilenceUsage: true,
 }
 
 // Execute adds all child commands to the root command and sets flags appropriately.
@@ -156,8 +153,9 @@ func Execute() {
 	ctx, cancel := signal.NotifyContext(context.Background(), os.Interrupt)
 	defer cancel()
 
-	err := rootCmd.ExecuteContext(ctx)
-	if err != nil {
+	rootCmd.SilenceErrors = true
+	if err := rootCmd.ExecuteContext(ctx); err != nil {
+		fmt.Fprintln(os.Stderr, "Error:", err)
 		os.Exit(1)
 	}
 }
@@ -193,7 +191,7 @@ func ensureConfig(configDir, configPath string) {
 		fmt.Fprintln(os.Stderr, "Error creating config dir:", err)
 		return
 	}
-	defaultConfig := "address: \"\"\ninsecure: false\ntimeout: 30s\n"
+	defaultConfig := "address: \"\"\ninsecure: false\ntimeout: 0\n"
 	if err := os.WriteFile(configPath, []byte(defaultConfig), 0644); err != nil {
 		fmt.Fprintln(os.Stderr, "Error creating config file:", err)
 		return
@@ -218,7 +216,7 @@ func initConfig() {
 
 	if err := viper.ReadInConfig(); err != nil {
 		if cfgFile != "" {
-			fatal(err)
+			cobra.CheckErr(err)
 		}
 	}
 }

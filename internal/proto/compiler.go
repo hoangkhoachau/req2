@@ -62,7 +62,37 @@ func NewMessage(desc protoreflect.MessageDescriptor) *dynamicpb.Message {
 		msg := dynamicpb.NewMessage(desc)
 		for i := 0; i < desc.Fields().Len(); i++ {
 			f := desc.Fields().Get(i)
-			if f.Kind() != protoreflect.MessageKind || f.IsList() || f.IsMap() {
+			if f.IsMap() {
+				// Emit one placeholder map entry so users see the key/value types.
+				mapDesc := f.Message()
+				keyField := mapDesc.Fields().ByName("key")
+				valField := mapDesc.Fields().ByName("value")
+				entry := dynamicpb.NewMessage(mapDesc)
+				entry.Set(keyField, keyField.Default())
+				if valField.Kind() == protoreflect.MessageKind {
+					if !slices.Contains(path, valField.Message().FullName()) {
+						entry.Set(valField, protoreflect.ValueOfMessage(fill(valField.Message(), append(path, desc.FullName()))))
+					}
+				} else {
+					entry.Set(valField, valField.Default())
+				}
+				list := msg.Mutable(f).Map()
+				list.Set(entry.Get(keyField).MapKey(), protoreflect.ValueOfMessage(entry))
+				continue
+			}
+			if f.IsList() {
+				// Emit one placeholder element so users see the element type.
+				list := msg.Mutable(f).List()
+				if f.Kind() == protoreflect.MessageKind {
+					if !slices.Contains(path, f.Message().FullName()) {
+						list.Append(protoreflect.ValueOfMessage(fill(f.Message(), append(path, desc.FullName()))))
+					}
+				} else {
+					list.Append(f.Default())
+				}
+				continue
+			}
+			if f.Kind() != protoreflect.MessageKind {
 				continue
 			}
 			nested := f.Message()
