@@ -7,7 +7,6 @@ import (
 	"path/filepath"
 	compiler "github.com/hoangkhoachau/req2/internal/proto"
 	"strings"
-	"sync"
 
 	"google.golang.org/protobuf/encoding/protojson"
 	"google.golang.org/protobuf/reflect/protoreflect"
@@ -17,12 +16,6 @@ type registry struct {
 	methods  map[string]protoreflect.MethodDescriptor
 	messages map[string]protoreflect.MessageDescriptor
 }
-
-var (
-	reg     *registry
-	regErr  error
-	regOnce sync.Once
-)
 
 var jsonMarshal = protojson.MarshalOptions{
 	Multiline:       true,
@@ -36,13 +29,6 @@ func methodFullName(m protoreflect.MethodDescriptor) string {
 
 func rpcPath(m protoreflect.MethodDescriptor) string {
 	return "/" + string(m.Parent().FullName()) + "/" + string(m.Name())
-}
-
-func loadRegistry(ctx context.Context, protoPaths []string) (*registry, error) {
-	regOnce.Do(func() {
-		reg, regErr = buildRegistry(ctx, protoPaths)
-	})
-	return reg, regErr
 }
 
 func buildRegistry(ctx context.Context, protoPaths []string) (*registry, error) {
@@ -86,7 +72,7 @@ func buildRegistry(ctx context.Context, protoPaths []string) (*registry, error) 
 }
 
 func resolveMethod(ctx context.Context, protoPaths []string, name string) (protoreflect.MethodDescriptor, error) {
-	r, err := loadRegistry(ctx, protoPaths)
+	r, err := buildRegistry(ctx, protoPaths)
 	if err != nil {
 		return nil, err
 	}
@@ -98,7 +84,7 @@ func resolveMethod(ctx context.Context, protoPaths []string, name string) (proto
 }
 
 func completionCandidates(ctx context.Context, protoPaths []string, toComplete string) []string {
-	r, err := loadRegistry(ctx, protoPaths)
+	r, err := buildRegistry(ctx, protoPaths)
 	if err != nil {
 		return nil
 	}
@@ -113,7 +99,7 @@ func completionCandidates(ctx context.Context, protoPaths []string, toComplete s
 }
 
 func messageCompletionCandidates(ctx context.Context, protoPaths []string, toComplete string) []string {
-	r, err := loadRegistry(ctx, protoPaths)
+	r, err := buildRegistry(ctx, protoPaths)
 	if err != nil {
 		return nil
 	}

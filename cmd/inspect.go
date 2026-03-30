@@ -23,43 +23,51 @@ var inspectCmd = &cobra.Command{
 		)
 		return candidates, cobra.ShellCompDirectiveNoFileComp
 	},
-	Run: func(cmd *cobra.Command, args []string) {
+	RunE: func(cmd *cobra.Command, args []string) error {
 		protos, _ := cmd.Flags().GetStringSlice("proto")
-		r := loadRegistry(cmd.Context(), protos)
+		r, err := buildRegistry(cmd.Context(), protos)
+		if err != nil {
+			return err
+		}
 
 		name := args[0]
 
 		if method, ok := r.methods[name]; ok {
-			printMethod(method)
-			return
+			return printMethod(method)
 		}
 
 		if msg, ok := r.messages[name]; ok {
-			printMessage(msg)
-			return
+			return printMessage(msg)
 		}
 
-		fatal(fmt.Errorf("method or message not found: %s", name))
+		return fmt.Errorf("method or message not found: %s", name)
 	},
+	SilenceUsage: true,
 }
 
-func marshalOrExit(desc protoreflect.MessageDescriptor) string {
-	str, err := jsonMarshal.Marshal(compiler.NewMessage(desc))
+func printMethod(method protoreflect.MethodDescriptor) error {
+	input, err := jsonMarshal.Marshal(compiler.NewMessage(method.Input()))
 	if err != nil {
-		fatal(err)
+		return err
 	}
-	return string(str)
-}
-
-func printMethod(method protoreflect.MethodDescriptor) {
+	output, err := jsonMarshal.Marshal(compiler.NewMessage(method.Output()))
+	if err != nil {
+		return err
+	}
 	fmt.Println("# Input")
-	fmt.Println(marshalOrExit(method.Input()))
+	fmt.Println(string(input))
 	fmt.Println("# Output")
-	fmt.Println(marshalOrExit(method.Output()))
+	fmt.Println(string(output))
+	return nil
 }
 
-func printMessage(msg protoreflect.MessageDescriptor) {
-	fmt.Println(marshalOrExit(msg))
+func printMessage(msg protoreflect.MessageDescriptor) error {
+	str, err := jsonMarshal.Marshal(compiler.NewMessage(msg))
+	if err != nil {
+		return err
+	}
+	fmt.Println(string(str))
+	return nil
 }
 
 func init() {

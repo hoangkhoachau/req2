@@ -15,11 +15,10 @@ var cacheClearCmd = &cobra.Command{
 	Use:   "clear",
 	Short: "Clear all cached inputs",
 	Args:  cobra.NoArgs,
-	Run: func(cmd *cobra.Command, args []string) {
-		if err := cache.ClearCache(); err != nil {
-			fatal(err)
-		}
+	RunE: func(cmd *cobra.Command, args []string) error {
+		return cache.ClearCache()
 	},
+	SilenceUsage: true,
 }
 
 func init() {
