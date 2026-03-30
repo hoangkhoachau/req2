@@ -16,9 +16,9 @@ func Edit(val string) (string, error) {
 		return val, err
 	}
 	defer os.Remove(tempFile.Name())
-	defer tempFile.Close()
 
 	_, err = tempFile.WriteString(val)
+	tempFile.Close()
 	if err != nil {
 		return val, err
 	}

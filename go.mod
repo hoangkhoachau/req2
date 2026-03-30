@@ -4,7 +4,6 @@ go 1.26.1
 
 require (
 	github.com/bufbuild/protocompile v0.14.1
-	github.com/samber/lo v1.53.0
 	github.com/spf13/cobra v1.10.2
 	github.com/spf13/viper v1.21.0
 	google.golang.org/grpc v1.79.3

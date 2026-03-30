@@ -9,8 +9,6 @@ import (
 	"slices"
 
 	"github.com/bufbuild/protocompile"
-	"github.com/bufbuild/protocompile/linker"
-	"github.com/samber/lo"
 	"google.golang.org/protobuf/reflect/protoreflect"
 	"google.golang.org/protobuf/types/dynamicpb"
 )
@@ -51,19 +49,11 @@ func Compile(ctx context.Context, path string, importPaths []string) ([]protoref
 	if err != nil {
 		return nil, err
 	}
-	return lo.Map(res, func(fd linker.File, _ int) protoreflect.FileDescriptor {
-		return fd
-	}), nil
-}
-
-func ListServices(fds []protoreflect.FileDescriptor) []protoreflect.ServiceDescriptor {
-	var services []protoreflect.ServiceDescriptor
-	for _, fd := range fds {
-		for i := 0; i < fd.Services().Len(); i++ {
-			services = append(services, fd.Services().Get(i))
-		}
+	fds := make([]protoreflect.FileDescriptor, len(res))
+	for i, fd := range res {
+		fds[i] = fd
 	}
-	return services
+	return fds, nil
 }
 
 func NewMessage(desc protoreflect.MessageDescriptor) *dynamicpb.Message {
@@ -85,11 +75,14 @@ func NewMessage(desc protoreflect.MessageDescriptor) *dynamicpb.Message {
 	return fill(desc, nil)
 }
 
-func ListMethods(fds []protoreflect.ServiceDescriptor) []protoreflect.MethodDescriptor {
+func ListMethods(fds []protoreflect.FileDescriptor) []protoreflect.MethodDescriptor {
 	var methods []protoreflect.MethodDescriptor
-	for _, service := range fds {
-		for i := 0; i < service.Methods().Len(); i++ {
-			methods = append(methods, service.Methods().Get(i))
+	for _, fd := range fds {
+		for i := 0; i < fd.Services().Len(); i++ {
+			svc := fd.Services().Get(i)
+			for j := 0; j < svc.Methods().Len(); j++ {
+				methods = append(methods, svc.Methods().Get(j))
+			}
 		}
 	}
 	return methods

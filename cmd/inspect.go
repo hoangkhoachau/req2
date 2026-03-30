@@ -2,7 +2,6 @@ package cmd
 
 import (
 	"fmt"
-	"os"
 	compiler "req2/internal/proto"
 
 	"github.com/spf13/cobra"
@@ -17,37 +16,37 @@ var inspectCmd = &cobra.Command{
 		if len(args) > 0 {
 			return nil, cobra.ShellCompDirectiveNoFileComp
 		}
+		protos, _ := cmd.Flags().GetStringSlice("proto")
 		candidates := append(
-			completionCandidates(cmd.Root(), toComplete),
-			messageCompletionCandidates(cmd.Root(), toComplete)...,
+			completionCandidates(cmd.Context(), protos, toComplete),
+			messageCompletionCandidates(cmd.Context(), protos, toComplete)...,
 		)
 		return candidates, cobra.ShellCompDirectiveNoFileComp
 	},
 	Run: func(cmd *cobra.Command, args []string) {
-		populateMethods(cmd.Root())
+		protos, _ := cmd.Flags().GetStringSlice("proto")
+		r := loadRegistry(cmd.Context(), protos)
 
 		name := args[0]
 
-		if method, ok := methods[name]; ok {
+		if method, ok := r.methods[name]; ok {
 			printMethod(method)
 			return
 		}
 
-		if msg, ok := messages[name]; ok {
+		if msg, ok := r.messages[name]; ok {
 			printMessage(msg)
 			return
 		}
 
-		fmt.Fprintln(os.Stderr, "Method or message not found:", name)
-		os.Exit(1)
+		fatal(fmt.Errorf("method or message not found: %s", name))
 	},
 }
 
 func marshalOrExit(desc protoreflect.MessageDescriptor) string {
 	str, err := jsonMarshal.Marshal(compiler.NewMessage(desc))
 	if err != nil {
-		fmt.Fprintln(os.Stderr, "Error:", err)
-		os.Exit(1)
+		fatal(err)
 	}
 	return string(str)
 }

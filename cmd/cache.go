@@ -1,8 +1,6 @@
 package cmd
 
 import (
-	"fmt"
-	"os"
 	"req2/internal/cache"
 
 	"github.com/spf13/cobra"
@@ -19,8 +17,7 @@ var cacheClearCmd = &cobra.Command{
 	Args:  cobra.NoArgs,
 	Run: func(cmd *cobra.Command, args []string) {
 		if err := cache.ClearCache(); err != nil {
-			fmt.Fprintln(os.Stderr, "Error:", err)
-			os.Exit(1)
+			fatal(err)
 		}
 	},
 }
