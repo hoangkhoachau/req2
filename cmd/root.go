@@ -80,10 +80,13 @@ Example:
 
 		defaultInput := string(inputStr)
 		input := defaultInput
-		if cachedInput, err := cache.RetrieveCache(defaultInput); err == nil {
-			input = cachedInput
-		} else if !os.IsNotExist(err) {
-			fmt.Fprintln(os.Stderr, "Warning: failed to retrieve cache:", err)
+		noCache, _ := cmd.Flags().GetBool("no-cache")
+		if !noCache {
+			if cachedInput, err := cache.RetrieveCache(defaultInput); err == nil {
+				input = cachedInput
+			} else if !os.IsNotExist(err) {
+				fmt.Fprintln(os.Stderr, "Warning: failed to retrieve cache:", err)
+			}
 		}
 
 		repeat, _ := cmd.Flags().GetBool("repeat")
@@ -173,6 +176,7 @@ func init() {
 	rootCmd.Flags().StringP("address", "a", "", "gRPC server address")
 	rootCmd.Flags().BoolP("insecure", "i", false, "use insecure connection")
 	rootCmd.Flags().BoolP("repeat", "r", false, "repeat request without editor input")
+	rootCmd.Flags().BoolP("no-cache", "n", false, "ignore cached input, open editor with default template")
 	rootCmd.Flags().DurationP("timeout", "t", 0, "request timeout (e.g. 30s, 1m); 0 means no timeout")
 	rootCmd.Flags().StringArrayP("header", "H", nil, "gRPC metadata header (key:value), repeatable")
 
